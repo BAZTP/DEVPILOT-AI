@@ -1,17 +1,25 @@
 import { create } from "zustand";
+import {
+  fetchFileTree,
+  createFileRemote,
+  createDirectoryRemote,
+  deleteItemRemote,
+  renameItemRemote,
+} from "@/lib/api";
 
 export interface TreeNode {
   id: string;
   name: string;
   path: string;
   type: "file" | "directory";
-  children?: TreeNode[];
-  content?: string;
-  language?: string;
-  status?: "untracked" | "modified" | "clean";
+  children?: TreeNode[] | undefined;
+  content?: string | undefined;
+  language?: string | undefined;
+  status?: ("untracked" | "modified" | "clean") | undefined;
 }
 
 interface ProjectState {
+  projectId: string;
   projectName: string;
   projectPath: string;
   gitBranch: string;
@@ -21,6 +29,7 @@ interface ProjectState {
   modifiedPaths: Set<string>;
 
   // Acciones
+  setProjectId: (id: string) => void;
   setProjectName: (name: string) => void;
   setGitBranch: (branch: string) => void;
   toggleFolder: (folderId: string) => void;
@@ -32,6 +41,7 @@ interface ProjectState {
   deleteNode: (path: string) => void;
   renameNode: (path: string, newName: string) => void;
   findNodeByPath: (path: string) => TreeNode | null;
+  syncWithBackend: () => Promise<void>;
 }
 
 // Estructura de archivos inicial para el espacio de trabajo de demostración
@@ -127,6 +137,7 @@ const INITIAL_PROJECT_FILES: TreeNode[] = [
 ];
 
 export const useProjectStore = create<ProjectState>((set, get) => ({
+  projectId: "devpilot-demo-app",
   projectName: "devpilot-demo-app",
   projectPath: "c:/Users/andre/Documents/antigravity/DEVPILOT AI",
   gitBranch: "main",
@@ -135,6 +146,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   selectedNodeId: "src-app-page",
   modifiedPaths: new Set(),
 
+  setProjectId: (id) => set({ projectId: id }),
   setProjectName: (name) => set({ projectName: name }),
   setGitBranch: (branch) => set({ gitBranch: branch }),
 
@@ -169,6 +181,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   createFile: (parentPath, fileName, initialContent = "") => {
     const fullPath = parentPath ? `${parentPath}/${fileName}` : fileName;
+    createFileRemote(get().projectId, fullPath, initialContent).catch(() => {});
+
     const newId = `file-${Date.now()}`;
     const newNode: TreeNode = {
       id: newId,
@@ -204,6 +218,8 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
 
   createFolder: (parentPath, folderName) => {
     const fullPath = parentPath ? `${parentPath}/${folderName}` : folderName;
+    createDirectoryRemote(get().projectId, fullPath).catch(() => {});
+
     const newId = `dir-${Date.now()}`;
     const newNode: TreeNode = {
       id: newId,
@@ -243,6 +259,7 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   deleteNode: (path) => {
+    deleteItemRemote(get().projectId, path).catch(() => {});
     const deleteRecursive = (nodes: TreeNode[]): TreeNode[] => {
       return nodes
         .filter((n) => n.path !== path)
@@ -252,12 +269,14 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
   },
 
   renameNode: (path, newName) => {
+    const parts = path.split("/");
+    parts[parts.length - 1] = newName;
+    const newPath = parts.join("/");
+    renameItemRemote(get().projectId, path, newPath).catch(() => {});
+
     const renameRecursive = (nodes: TreeNode[]): TreeNode[] => {
       return nodes.map((node) => {
         if (node.path === path) {
-          const parts = path.split("/");
-          parts[parts.length - 1] = newName;
-          const newPath = parts.join("/");
           return { ...node, name: newName, path: newPath };
         }
         if (node.children) {
@@ -282,5 +301,30 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     };
     search(get().files);
     return found;
+  },
+
+  syncWithBackend: async () => {
+    try {
+      const remoteNodes = await fetchFileTree(get().projectId);
+      if (remoteNodes && remoteNodes.length > 0) {
+        const convertToTreeNodes = (nodes: any[]): TreeNode[] => {
+          return nodes.map((n, idx) => {
+            const node: TreeNode = {
+              id: `node-${n.path}-${idx}`,
+              name: n.name,
+              path: n.path,
+              type: n.type,
+            };
+            if (n.children && n.children.length > 0) {
+              node.children = convertToTreeNodes(n.children);
+            }
+            return node;
+          });
+        };
+        set({ files: convertToTreeNodes(remoteNodes) });
+      }
+    } catch {
+      // Fallback transparente a archivos en memoria
+    }
   },
 }));

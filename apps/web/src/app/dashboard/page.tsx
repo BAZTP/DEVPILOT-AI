@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Cpu,
@@ -22,6 +22,7 @@ import {
   Settings,
   Github,
 } from "lucide-react";
+import { fetchProjects, createProject, toggleFavoriteProject } from "@/lib/api";
 
 interface ProjectItem {
   id: string;
@@ -73,6 +74,29 @@ export default function DashboardPage() {
   const [isNewProjectModalOpen, setIsNewProjectModalOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("React");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    fetchProjects()
+      .then((data) => {
+        if (data && data.length > 0) {
+          const mapped: ProjectItem[] = data.map((p) => ({
+            id: p.id,
+            name: p.name,
+            description: p.description || `Proyecto ${p.name}`,
+            template: p.template || "React",
+            language: p.language || "TypeScript",
+            lastOpened: "Reciente",
+            isFavorite: !!p.isFavorite,
+            branch: "main",
+          }));
+          setProjects(mapped);
+        }
+      })
+      .catch((err) => {
+        console.warn("[DevPilot] Modo sin conexión para proyectos:", err.message);
+      });
+  }, []);
 
   const toggleFavorite = (id: string, e: React.MouseEvent) => {
     e.preventDefault();
@@ -80,30 +104,58 @@ export default function DashboardPage() {
     setProjects((prev) =>
       prev.map((p) => (p.id === id ? { ...p, isFavorite: !p.isFavorite } : p))
     );
+    toggleFavoriteProject(id).catch(() => {});
   };
 
   const filteredProjects = filterFavorite
     ? projects.filter((p) => p.isFavorite)
     : projects;
 
-  const handleCreateProject = (e: React.FormEvent) => {
+  const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newProjectName.trim()) return;
+    const trimmed = newProjectName.trim();
+    if (!trimmed) return;
+    setIsSubmitting(true);
 
-    const newProj: ProjectItem = {
-      id: `proj-${Date.now()}`,
-      name: newProjectName.trim(),
-      description: `Proyecto creado desde plantilla ${selectedTemplate}.`,
-      template: selectedTemplate,
-      language: selectedTemplate === "Python" ? "Python" : "TypeScript",
-      lastOpened: "Ahora mismo",
-      isFavorite: false,
-      branch: "main",
-    };
+    try {
+      const res = await createProject({
+        name: trimmed,
+        template: selectedTemplate,
+        description: `Proyecto creado desde plantilla ${selectedTemplate}.`,
+      });
 
-    setProjects([newProj, ...projects]);
-    setIsNewProjectModalOpen(false);
-    setNewProjectName("");
+      const newProj: ProjectItem = {
+        id: res.id,
+        name: res.name,
+        description: res.description || `Proyecto creado desde plantilla ${selectedTemplate}.`,
+        template: res.template || selectedTemplate,
+        language: selectedTemplate === "Python" ? "Python" : "TypeScript",
+        lastOpened: "Ahora mismo",
+        isFavorite: false,
+        branch: "main",
+      };
+
+      setProjects([newProj, ...projects]);
+      setIsNewProjectModalOpen(false);
+      setNewProjectName("");
+    } catch (err: any) {
+      console.warn("[DevPilot] Creando proyecto en memoria local:", err.message);
+      const newProj: ProjectItem = {
+        id: `proj-${Date.now()}`,
+        name: trimmed,
+        description: `Proyecto creado desde plantilla ${selectedTemplate}.`,
+        template: selectedTemplate,
+        language: selectedTemplate === "Python" ? "Python" : "TypeScript",
+        lastOpened: "Ahora mismo",
+        isFavorite: false,
+        branch: "main",
+      };
+      setProjects([newProj, ...projects]);
+      setIsNewProjectModalOpen(false);
+      setNewProjectName("");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -307,7 +359,7 @@ export default function DashboardPage() {
             {filteredProjects.map((project) => (
               <Link
                 key={project.id}
-                href="/ide"
+                href={`/ide?projectId=${encodeURIComponent(project.id)}&projectName=${encodeURIComponent(project.name)}`}
                 className="p-5 rounded-xl border border-ide-border bg-ide-panel hover:border-electric-500/40 hover:bg-surface-850/60 transition-all flex flex-col justify-between group shadow-sm"
               >
                 <div>
@@ -491,10 +543,11 @@ export default function DashboardPage() {
                 </button>
                 <button
                   type="submit"
-                  disabled={!newProjectName.trim()}
-                  className="ide-btn-primary px-4 py-1.5 text-xs disabled:opacity-50"
+                  disabled={!newProjectName.trim() || isSubmitting}
+                  className="ide-btn-primary px-4 py-1.5 text-xs disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  Crear e Iniciar
+                  {isSubmitting && <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+                  <span>{isSubmitting ? "Creando..." : "Crear e Iniciar"}</span>
                 </button>
               </div>
             </form>

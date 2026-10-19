@@ -19,9 +19,11 @@ import {
 } from "lucide-react";
 import { useProjectStore, TreeNode } from "@/stores/projectStore";
 import { useEditorStore } from "@/stores/editorStore";
+import { fetchFileContent } from "@/lib/api";
 
 export const FileExplorer: React.FC = () => {
   const {
+    projectId,
     projectName,
     files,
     expandedFolderIds,
@@ -33,10 +35,12 @@ export const FileExplorer: React.FC = () => {
     createFolder,
     deleteNode,
     renameNode,
+    syncWithBackend,
   } = useProjectStore();
 
   const { openFile, activeFilePath, openFiles } = useEditorStore();
 
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isCreatingFile, setIsCreatingFile] = useState(false);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [targetParentPath, setTargetParentPath] = useState("");
@@ -163,12 +167,21 @@ export const FileExplorer: React.FC = () => {
       return (
         <div
           key={node.id}
-          onClick={() => {
+          onClick={async () => {
             selectNode(node.id);
+            let content = node.content;
+            if (content === undefined && projectId) {
+              try {
+                const res = await fetchFileContent(projectId, node.path);
+                content = res.content;
+              } catch {
+                content = `// Archivo: ${node.name}\n`;
+              }
+            }
             openFile({
               path: node.path,
               name: node.name,
-              content: node.content ?? `// Archivo: ${node.name}\n`,
+              content: content ?? `// Archivo: ${node.name}\n`,
               language: node.language,
             });
           }}
@@ -277,6 +290,17 @@ export const FileExplorer: React.FC = () => {
             className="p-1 rounded hover:bg-surface-800 hover:text-ide-text"
           >
             <ChevronsDownUp className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={async () => {
+              setIsSyncing(true);
+              await syncWithBackend();
+              setIsSyncing(false);
+            }}
+            title="Sincronizar con disco"
+            className="p-1 rounded hover:bg-surface-800 hover:text-ide-text"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-electric-400" : ""}`} />
           </button>
         </div>
       </div>

@@ -16,7 +16,24 @@ import { useProjectStore } from "@/stores/projectStore";
 export const IDELayout: React.FC = () => {
   const { openFile, openFiles, saveFile, activeFilePath } = useEditorStore();
   const { toggleSidebar, toggleBottomPanel, toggleZenMode } = useLayoutStore();
-  const { findNodeByPath } = useProjectStore();
+  const { findNodeByPath, setProjectId, setProjectName, syncWithBackend } = useProjectStore();
+
+  // Sincronizar proyecto desde URL y cargar estructura del backend
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const urlProjectId = params.get("projectId");
+      const urlProjectName = params.get("projectName");
+
+      if (urlProjectId) {
+        setProjectId(urlProjectId);
+      }
+      if (urlProjectName) {
+        setProjectName(decodeURIComponent(urlProjectName));
+      }
+    }
+    syncWithBackend();
+  }, [setProjectId, setProjectName, syncWithBackend]);
 
   // Abrir el archivo inicial en el editor al montar si no hay archivos abiertos
   useEffect(() => {

@@ -191,22 +191,57 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   saveFile: (path) => {
     const { openFiles } = get();
+    const file = openFiles.find((f) => f.path === path);
+    if (!file) return;
+
     set({
-      openFiles: openFiles.map((file) => {
-        if (file.path === path) {
+      openFiles: openFiles.map((f) => {
+        if (f.path === path) {
           return {
-            ...file,
-            originalContent: file.content,
+            ...f,
+            originalContent: f.content,
             isDirty: false,
           };
         }
-        return file;
+        return f;
       }),
     });
+
+    try {
+      import("@/lib/api").then(({ saveFileContent }) => {
+        import("@/stores/projectStore").then(({ useProjectStore }) => {
+          const projectId = useProjectStore.getState().projectId;
+          if (projectId) {
+            saveFileContent(projectId, path, file.content).catch((err) => {
+              console.warn(`[DevPilot] No se pudo persistir ${path}:`, err.message);
+            });
+          }
+        });
+      });
+    } catch {
+      // Fallback en memoria
+    }
   },
 
   saveAllFiles: () => {
     const { openFiles } = get();
+    try {
+      import("@/lib/api").then(({ saveFileContent }) => {
+        import("@/stores/projectStore").then(({ useProjectStore }) => {
+          const projectId = useProjectStore.getState().projectId;
+          if (projectId) {
+            openFiles.forEach((file) => {
+              if (file.isDirty) {
+                saveFileContent(projectId, file.path, file.content).catch(() => {});
+              }
+            });
+          }
+        });
+      });
+    } catch {
+      // Fallback en memoria
+    }
+
     set({
       openFiles: openFiles.map((file) => ({
         ...file,
