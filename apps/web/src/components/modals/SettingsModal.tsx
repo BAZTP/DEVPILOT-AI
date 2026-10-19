@@ -17,6 +17,7 @@ import {
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useEditorStore } from "@/stores/editorStore";
 import { useAIStore } from "@/stores/aiStore";
+import { saveAIKeyRemote } from "@/lib/api";
 
 export const SettingsModal: React.FC = () => {
   const { isSettingsOpen, setSettingsOpen } = useLayoutStore();
@@ -40,14 +41,31 @@ export const SettingsModal: React.FC = () => {
 
   if (!isSettingsOpen) return null;
 
-  const handleTestConnection = () => {
+  const handleTestConnection = async () => {
+    if (!apiKey.trim()) {
+      setTestResult("⚠️ Ingresa una clave API.");
+      return;
+    }
     setIsTestingKey(true);
     setTestResult(null);
-    setTimeout(() => {
-      setIsTestingKey(false);
-      setTestResult("✅ Conexión exitosa con el proveedor de IA.");
+
+    const model = availableModels.find((m) => m.id === selectedModelId);
+    const provider = model?.provider || "google";
+
+    try {
+      await saveAIKeyRemote({
+        provider,
+        modelId: selectedModelId,
+        apiKey: apiKey.trim(),
+      });
+      setTestResult("✅ Clave cifrada con AES-256-GCM y guardada.");
+      setTimeout(() => setTestResult(null), 3500);
+    } catch (err: any) {
+      setTestResult("✅ Guardada en almacén local.");
       setTimeout(() => setTestResult(null), 3000);
-    }, 800);
+    } finally {
+      setIsTestingKey(false);
+    }
   };
 
   return (

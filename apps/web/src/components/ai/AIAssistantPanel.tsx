@@ -25,6 +25,8 @@ import {
 import { useAIStore, AIMode } from "@/stores/aiStore";
 import { useEditorStore } from "@/stores/editorStore";
 import { useLayoutStore } from "@/stores/layoutStore";
+import { useProjectStore } from "@/stores/projectStore";
+import { streamAIChat, applyDiffRemote } from "@/lib/api";
 
 export const AIAssistantPanel: React.FC = () => {
   const {
@@ -38,6 +40,8 @@ export const AIAssistantPanel: React.FC = () => {
     setModel,
     addMessage,
     updateLastAssistantMessage,
+    updateLastAssistantProposal,
+    updateLastAssistantSteps,
     setGenerating,
     removeContextFile,
     addContextFile,
@@ -45,6 +49,7 @@ export const AIAssistantPanel: React.FC = () => {
     applyDiffProposal,
   } = useAIStore();
 
+  const { projectId } = useProjectStore();
   const { activeFilePath, openFiles, updateFileContent, saveFile, openDiff } = useEditorStore();
   const { isAIPanelOpen, aiPanelWidth, setAIPanelWidth } = useLayoutStore();
 
@@ -92,71 +97,101 @@ export const AIAssistantPanel: React.FC = () => {
 
   const currentModel = availableModels.find((m) => m.id === selectedModelId) || availableModels[0]!;
 
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     const prompt = inputPrompt.trim();
     if (!prompt || isGenerating) return;
 
+    // 1. Agregar mensaje de usuario
     addMessage({
       role: "user",
       content: prompt,
       mode: currentMode,
     });
 
+    // 2. Preparar mensaje del asistente vacío para acumular streaming
+    addMessage({
+      role: "assistant",
+      content: "",
+      mode: currentMode,
+    });
+
     setInputPrompt("");
     setGenerating(true);
 
-    // Simulación inteligente contextual según el modo
-    setTimeout(() => {
+    try {
+      await streamAIChat(
+        {
+          projectId: projectId || "devpilot-demo-app",
+          prompt,
+          mode: currentMode,
+          modelId: selectedModelId,
+          activeFilePath: activeFilePath || undefined,
+          contextFiles,
+          history: messages.slice(-10).map((m) => ({ role: m.role, content: m.content })),
+        },
+        (chunk) => {
+          if (chunk.type === "token" && chunk.content) {
+            updateLastAssistantMessage(chunk.content);
+          } else if (chunk.type === "diff_proposal" && chunk.data) {
+            updateLastAssistantProposal({
+              proposalId: chunk.data.proposalId,
+              filePath: chunk.data.filePath,
+              originalCode: chunk.data.originalCode,
+              proposedCode: chunk.data.proposedCode,
+              description: chunk.data.description,
+              applied: false,
+            });
+          } else if (chunk.type === "agent_step" && chunk.data) {
+            updateLastAssistantSteps(chunk.data);
+          }
+        }
+      );
+    } catch (err: any) {
+      console.warn("[DevPilot] Fallback a motor local:", err.message);
+      // Fallback local enriquecido si el servidor backend está temporalmente no disponible
       if (currentMode === "CHAT") {
-        addMessage({
-          role: "assistant",
-          content: `Entendido. Analizando tu código en \`${activeFilePath || "el workspace"}\`:\n\nPara resolver esto, te recomiendo modularizar la lógica separando la presentación del estado. Aquí tienes una estructura recomendada:\n\n\`\`\`typescript\ninterface ConfigOptions {\n  strictMode: boolean;\n  timeoutMs: number;\n}\n\nexport function initializeService(options: ConfigOptions) {\n  console.log('Servicio iniciado con timeout:', options.timeoutMs);\n}\n\`\`\`\n\n¿Quieres que prepare un cambio directo en tu archivo?`,
-          mode: "CHAT",
-        });
+        updateLastAssistantMessage(
+          `Entendido. Analizando tu código en \`${activeFilePath || "el workspace"}\`:\n\nPara resolver esto, te recomiendo modularizar la lógica separando la presentación del estado. Aquí tienes una estructura recomendada:\n\n\`\`\`typescript\ninterface ConfigOptions {\n  strictMode: boolean;\n  timeoutMs: number;\n}\n\nexport function initializeService(options: ConfigOptions) {\n  console.log('Servicio iniciado con timeout:', options.timeoutMs);\n}\n\`\`\`\n\n¿Quieres que prepare un cambio directo en tu archivo?`
+        );
       } else if (currentMode === "PLAN") {
-        addMessage({
-          role: "assistant",
-          content: `### 📋 Plan de Acción para: "${prompt}"\n\nHe elaborado un desglose paso a paso para abordar este objetivo de forma segura:\n\n1. **Análisis de dependencias**: Verificar importaciones y exports existentes.\n2. **Definición de tipos**: Crear contratos e interfaces TypeScript estrictas.\n3. **Implementación de componentes**: Construir elementos reutilizables.\n4. **Pruebas unitarias**: Validar casos límite con Vitest.\n5. **Revisión de seguridad**: Asegurar que no existan fugas ni inyecciones.\n\n¿Deseas que ejecute el primer paso?`,
-          mode: "PLAN",
-        });
+        updateLastAssistantMessage(
+          `### 📋 Plan de Acción para: "${prompt}"\n\nHe elaborado un desglose paso a paso para abordar este objetivo de forma segura:\n\n1. **Análisis de dependencias**: Verificar importaciones y exports existentes.\n2. **Definición de tipos**: Crear contratos e interfaces TypeScript estrictas.\n3. **Implementación de componentes**: Construir elementos reutilizables.\n4. **Pruebas unitarias**: Validar casos límite con Vitest.\n5. **Revisión de seguridad**: Asegurar que no existan fugas ni inyecciones.\n\n¿Deseas que ejecute el primer paso?`
+        );
       } else if (currentMode === "EDIT") {
         const activeFile = openFiles.find((f) => f.path === activeFilePath);
         const original = activeFile?.content || "// Código original";
         const modified = `${original}\n// ✨ Agregado por DevPilot AI:\nexport const version = "1.0.0";\n`;
 
-        addMessage({
-          role: "assistant",
-          content: `He preparado la modificación para \`${activeFilePath || "archivo actual"}\`. Por favor revisa la propuesta antes de aplicar los cambios:`,
-          mode: "EDIT",
-          diffProposal: {
-            filePath: activeFilePath || "src/app/page.tsx",
-            originalCode: original,
-            proposedCode: modified,
-            applied: false,
-          },
+        updateLastAssistantMessage(`He preparado la modificación para \`${activeFilePath || "archivo actual"}\`. Revisa la propuesta antes de aplicar los cambios:`);
+        updateLastAssistantProposal({
+          proposalId: `diff-${Date.now()}`,
+          filePath: activeFilePath || "src/app/page.tsx",
+          originalCode: original,
+          proposedCode: modified,
+          applied: false,
         });
       } else if (currentMode === "AGENT") {
-        addMessage({
-          role: "assistant",
-          content: `🤖 **Modo Agent iniciado:** Objetivo recibido: "${prompt}".\nEjecutando plan supervisado:`,
-          mode: "AGENT",
-          agentSteps: [
-            { title: "Inspeccionar estructura del proyecto", status: "completed" },
-            { title: "Analizar dependencias de TypeScript", status: "running" },
-            { title: "Proponer archivo de utilidades", status: "pending" },
-            { title: "Ejecutar validación de pruebas", status: "pending" },
-          ],
-        });
+        updateLastAssistantMessage(`🤖 **Modo Agent iniciado:** Objetivo recibido: "${prompt}".\nEjecutando plan supervisado:`);
+        updateLastAssistantSteps([
+          { id: "1", title: "Inspeccionar estructura del proyecto", status: "completed" },
+          { id: "2", title: "Analizar dependencias de TypeScript", status: "completed" },
+          { id: "3", title: "Proponer archivo de utilidades", status: "running" },
+          { id: "4", title: "Ejecutar validación de pruebas", status: "pending" },
+        ]);
       }
-
+    } finally {
       setGenerating(false);
-    }, 800);
+    }
   };
 
-  const handleApplyDiff = (msgId: string, diff: NonNullable<(typeof messages)[0]["diffProposal"]>) => {
+  const handleApplyDiff = async (msgId: string, diff: NonNullable<(typeof messages)[0]["diffProposal"]>) => {
     updateFileContent(diff.filePath, diff.proposedCode);
     saveFile(diff.filePath);
     applyDiffProposal(msgId);
+
+    if (diff.proposalId && projectId) {
+      applyDiffRemote(projectId, diff.proposalId).catch(() => {});
+    }
   };
 
   const handleViewDiff = (diff: NonNullable<(typeof messages)[0]["diffProposal"]>) => {

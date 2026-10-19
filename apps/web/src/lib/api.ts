@@ -160,3 +160,97 @@ export async function searchInFilesRemote(
     `/files/search/${projectId}?q=${encQuery}&matchCase=${matchCase}&regex=${regex}`
   );
 }
+
+// ─── Inteligencia Artificial ──────────────────────────────────────────────────
+
+export interface AIStreamChunkPayload {
+  type: "token" | "diff_proposal" | "agent_step" | "error" | "done";
+  content?: string;
+  data?: any;
+}
+
+export async function streamAIChat(
+  data: {
+    projectId: string;
+    prompt: string;
+    mode?: ("CHAT" | "PLAN" | "EDIT" | "AGENT") | undefined;
+    modelId?: string | undefined;
+    activeFilePath?: string | undefined;
+    contextFiles?: string[] | undefined;
+    history?: Array<{ role: "user" | "assistant" | "system"; content: string }> | undefined;
+  },
+  onChunk: (chunk: AIStreamChunkPayload) => void
+): Promise<void> {
+  const url = `${API_BASE_URL}/api/v1/ai/chat/stream`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Error en llamada a IA (${response.status}): ${errorText}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No se pudo iniciar el lector de stream SSE.");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n\n");
+    buffer = lines.pop() || "";
+
+    for (const block of lines) {
+      const line = block.trim();
+      if (line.startsWith("data: ")) {
+        try {
+          const payload = JSON.parse(line.slice(6));
+          onChunk(payload);
+        } catch {
+          // Payload incompleto
+        }
+      }
+    }
+  }
+}
+
+export async function applyDiffRemote(
+  projectId: string,
+  proposalId: string
+): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>("/ai/tools/apply", {
+    method: "POST",
+    body: JSON.stringify({ projectId, proposalId }),
+  });
+}
+
+export async function saveAIKeyRemote(data: {
+  provider: "google" | "anthropic" | "openai" | "ollama";
+  modelId: string;
+  apiKey: string;
+  baseUrl?: string | undefined;
+}): Promise<{ provider: string; modelId: string; configured: boolean }> {
+  return request<{ provider: string; modelId: string; configured: boolean }>(
+    "/ai/config",
+    {
+      method: "POST",
+      body: JSON.stringify(data),
+    }
+  );
+}
+
+export async function fetchAIProviders(): Promise<
+  Array<{ provider: string; configured: boolean }>
+> {
+  return request<Array<{ provider: string; configured: boolean }>>(
+    "/ai/providers"
+  );
+}
+

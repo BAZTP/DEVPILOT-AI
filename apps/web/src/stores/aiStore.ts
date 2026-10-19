@@ -17,12 +17,15 @@ export interface ChatMessage {
   timestamp: string;
   mode?: AIMode;
   diffProposal?: {
+    proposalId?: string;
     filePath: string;
     originalCode: string;
     proposedCode: string;
     applied?: boolean;
+    description?: string;
   };
   agentSteps?: Array<{
+    id?: string;
     title: string;
     status: "pending" | "running" | "completed" | "failed";
   }>;
@@ -42,6 +45,8 @@ interface AIState {
   setModel: (modelId: string) => void;
   addMessage: (msg: Omit<ChatMessage, "id" | "timestamp">) => void;
   updateLastAssistantMessage: (chunk: string) => void;
+  updateLastAssistantProposal: (proposal: NonNullable<ChatMessage["diffProposal"]>) => void;
+  updateLastAssistantSteps: (steps: NonNullable<ChatMessage["agentSteps"]>) => void;
   setGenerating: (isGenerating: boolean) => void;
   addContextFile: (filePath: string) => void;
   removeContextFile: (filePath: string) => void;
@@ -118,6 +123,28 @@ export const useAIStore = create<AIState>((set) => ({
       const last = msgs[msgs.length - 1];
       if (last && last.role === "assistant") {
         last.content += chunk;
+      }
+      return { messages: msgs };
+    });
+  },
+
+  updateLastAssistantProposal: (proposal) => {
+    set((state) => {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant") {
+        last.diffProposal = proposal;
+      }
+      return { messages: msgs };
+    });
+  },
+
+  updateLastAssistantSteps: (steps) => {
+    set((state) => {
+      const msgs = [...state.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === "assistant") {
+        last.agentSteps = steps;
       }
       return { messages: msgs };
     });
