@@ -1,0 +1,209 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Importar fuentes ──────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ─── Variables CSS ─────────────────────────────────────────────────────────── */
+:root {
+  --radius: 0.5rem;
+
+  /* IDE Layout */
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 48px;
+  --panel-ai-width: 380px;
+  --panel-bottom-height: 200px;
+  --topbar-height: 48px;
+  --tab-bar-height: 36px;
+
+  /* Transiciones */
+  --transition-fast: 150ms ease;
+  --transition-normal: 200ms ease;
+  --transition-slow: 300ms ease;
+
+  /* Scrollbar */
+  --scrollbar-size: 6px;
+  --scrollbar-track: #1e293b;
+  --scrollbar-thumb: #334155;
+  --scrollbar-thumb-hover: #475569;
+}
+
+/* ─── Base oscura del IDE ────────────────────────────────────────────────────── */
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-ide-bg text-ide-text font-sans;
+    font-size: 14px;
+    line-height: 1.5;
+    overflow: hidden; /* El IDE controla el scroll internamente */
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: theme('colors.ide-border');
+  }
+
+  /* Scrollbar personalizado — Webkit */
+  ::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
+
+  ::-webkit-scrollbar-corner {
+    background: var(--scrollbar-track);
+  }
+
+  /* Selección de texto */
+  ::selection {
+    @apply bg-electric-600/40 text-white;
+  }
+}
+
+/* ─── Componentes reutilizables ─────────────────────────────────────────────── */
+@layer components {
+  /* Botón base del IDE */
+  .ide-btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded px-3 py-1.5
+           text-sm font-medium transition-colors duration-150
+           focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-electric-500
+           disabled:opacity-50 disabled:pointer-events-none;
+  }
+
+  .ide-btn-primary {
+    @apply ide-btn bg-electric-600 text-white hover:bg-electric-500 active:bg-electric-700;
+  }
+
+  .ide-btn-secondary {
+    @apply ide-btn bg-surface-800 text-ide-text hover:bg-surface-700 border border-ide-border;
+  }
+
+  .ide-btn-ghost {
+    @apply ide-btn text-ide-text-muted hover:text-ide-text hover:bg-surface-800;
+  }
+
+  .ide-btn-danger {
+    @apply ide-btn bg-ide-error/10 text-ide-error hover:bg-ide-error/20 border border-ide-error/30;
+  }
+
+  /* Panel del IDE */
+  .ide-panel {
+    @apply bg-ide-panel border-ide-border overflow-hidden;
+  }
+
+  /* Etiqueta de pestaña */
+  .ide-tab {
+    @apply flex items-center gap-2 px-3 h-full text-sm
+           text-ide-text-muted hover:text-ide-text hover:bg-surface-800
+           border-r border-ide-border cursor-pointer select-none
+           transition-colors duration-100 whitespace-nowrap;
+  }
+
+  .ide-tab.active {
+    @apply text-ide-text bg-ide-editor border-t-2 border-t-electric-500;
+  }
+
+  /* Elemento del árbol de archivos */
+  .file-tree-item {
+    @apply flex items-center gap-1.5 px-2 py-0.5 rounded-sm text-sm
+           text-ide-text-muted hover:text-ide-text hover:bg-surface-800
+           cursor-pointer select-none transition-colors duration-100 w-full;
+  }
+
+  .file-tree-item.selected {
+    @apply text-ide-text bg-electric-600/20;
+  }
+
+  /* Badge de estado */
+  .status-badge {
+    @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs font-medium;
+  }
+
+  /* Input del IDE */
+  .ide-input {
+    @apply w-full bg-surface-900 border border-ide-border rounded px-3 py-1.5
+           text-sm text-ide-text placeholder-ide-text-muted
+           focus:outline-none focus:border-electric-500 focus:ring-1 focus:ring-electric-500/30
+           transition-colors duration-150;
+  }
+
+  /* Separador del IDE */
+  .ide-separator {
+    @apply border-ide-border;
+  }
+
+  /* Código inline */
+  code {
+    @apply font-mono bg-surface-800 text-electric-400 px-1 py-0.5 rounded text-xs;
+  }
+}
+
+/* ─── Utilidades ─────────────────────────────────────────────────────────────── */
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Efecto de brillo sutil para elementos activos */
+  .glow-electric {
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+  }
+
+  .glow-violet {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.15);
+  }
+}
+
+/* ─── Monaco Editor — overrides visuales ─────────────────────────────────────── */
+.monaco-editor {
+  font-family: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace !important;
+}
+
+.monaco-editor .margin {
+  background-color: #0d1117 !important;
+}
+
+/* ─── Animaciones de carga ───────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #1e293b 25%,
+    #334155 50%,
+    #1e293b 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

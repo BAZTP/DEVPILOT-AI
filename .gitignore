@@ -1,0 +1,71 @@
+# Entorno
+.env
+.env.local
+.env.*.local
+.env.production
+
+# Dependencias
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+**/.next/
+**/dist/
+**/build/
+
+# Turbo
+.turbo/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Prisma
+prisma/migrations/**/*.lock
+
+# IDE
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+**/coverage/
+
+# Playwright
+test-results/
+playwright-report/
+
+# Workspace de proyectos del usuario (datos de usuario, no código)
+devpilot-workspace/
+workspace-data/
+
+# Docker
+docker/volumes/
+
+# Certificados
+*.pem
+*.key
+*.crt
+*.cert
+
+# Archivos temporales
+tmp/
+temp/
+.temp/

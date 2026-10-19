@@ -1,0 +1,451 @@
+// =============================================================================
+// DevPilot AI — Schema Prisma
+// Base de datos: PostgreSQL 16
+// ORM: Prisma 5
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enumeraciones ────────────────────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum ProjectStatus {
+  ACTIVE
+  ARCHIVED
+  DELETED
+}
+
+enum ProjectTemplate {
+  BLANK
+  REACT
+  NEXTJS
+  NODEJS
+  PYTHON
+  NESTJS_API
+  HTML_CSS_JS
+}
+
+enum AIProvider {
+  OPENAI
+  ANTHROPIC
+  GOOGLE
+  OLLAMA
+  OPENROUTER
+  CUSTOM
+}
+
+enum AgentMode {
+  CHAT
+  PLAN
+  EDIT
+  AGENT
+}
+
+enum AgentTaskStatus {
+  PENDING
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum AgentStepStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+  AWAITING_APPROVAL
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+  TIMEOUT
+  CANCELLED
+}
+
+enum AuditAction {
+  // Autenticación
+  AUTH_LOGIN
+  AUTH_LOGOUT
+  AUTH_GITHUB_CONNECT
+  AUTH_GITHUB_DISCONNECT
+  // Proyectos
+  PROJECT_CREATE
+  PROJECT_UPDATE
+  PROJECT_DELETE
+  PROJECT_ARCHIVE
+  // Archivos
+  FILE_CREATE
+  FILE_READ
+  FILE_UPDATE
+  FILE_DELETE
+  FILE_RENAME
+  // IA
+  AI_CHAT_MESSAGE
+  AI_CODE_APPLY
+  AI_AGENT_START
+  AI_AGENT_STOP
+  // Git
+  GIT_CLONE
+  GIT_COMMIT
+  GIT_PUSH
+  GIT_BRANCH_CREATE
+  GIT_PR_CREATE
+  // Ejecución
+  EXECUTION_START
+  EXECUTION_CANCEL
+  // Configuración
+  CONFIG_MODEL_UPDATE
+  CONFIG_SECRET_UPDATE
+}
+
+// ─── Modelos de Usuario y Autenticación ──────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  avatarUrl     String?
+  role          UserRole  @default(USER)
+  emailVerified Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLoginAt   DateTime?
+
+  // Relaciones
+  accounts           Account[]
+  sessions           Session[]
+  workspaces         Workspace[]
+  projects           Project[]
+  aiConversations    AIConversation[]
+  agentTasks         AgentTask[]
+  modelConfigurations ModelConfiguration[]
+  gitConnections     GitConnection[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  provider          String  // "github", "google", "credentials"
+  providerAccountId String
+  accessToken       String? @db.Text  // Cifrado en la aplicación
+  refreshToken      String? @db.Text  // Cifrado en la aplicación
+  tokenType         String?
+  scope             String?
+  expiresAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  token        String   @unique @db.Text
+  ipAddress    String?
+  userAgent    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ─── Workspace y Proyectos ────────────────────────────────────────────────────
+
+model Workspace {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  // Ruta en el sistema de archivos del servidor (validada y aislada)
+  fsPath      String   @unique
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  owner    User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  projects Project[]
+
+  @@index([ownerId])
+  @@map("workspaces")
+}
+
+model Project {
+  id          String          @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String
+  workspaceId String
+  status      ProjectStatus   @default(ACTIVE)
+  template    ProjectTemplate @default(BLANK)
+  // Ruta relativa dentro del workspace (nunca absoluta al FS del SO)
+  relativePath String
+  isFavorite  Boolean         @default(false)
+  language    String?         // Lenguaje principal detectado
+  metadata    Json?           // Metadatos adicionales (extensible)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  lastOpenedAt DateTime?
+
+  owner           User                  @relation(fields: [ownerId], references: [id])
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id])
+  fileMetadata    ProjectFileMetadata[]
+  aiConversations AIConversation[]
+  agentTasks      AgentTask[]
+  gitConnection   GitConnection?
+  executionLogs   ExecutionLog[]
+
+  @@index([ownerId])
+  @@index([workspaceId])
+  @@index([status])
+  @@map("projects")
+}
+
+model ProjectFileMetadata {
+  id          String   @id @default(cuid())
+  projectId   String
+  // Ruta relativa al directorio del proyecto
+  relativePath String
+  mimeType    String?
+  sizeBytes   Int?
+  // Sha1 del contenido para detectar cambios
+  contentHash String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, relativePath])
+  @@index([projectId])
+  @@map("project_file_metadata")
+}
+
+// ─── Inteligencia Artificial ──────────────────────────────────────────────────
+
+model AIConversation {
+  id          String   @id @default(cuid())
+  userId      String
+  projectId   String?
+  title       String?
+  mode        AgentMode @default(CHAT)
+  modelId     String?   // ID de la configuración de modelo usada
+  contextFiles String[] // Rutas relativas de archivos incluidos en contexto
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project  Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  messages AIMessage[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id             String   @id @default(cuid())
+  conversationId String
+  role           String   // "user" | "assistant" | "system" | "tool"
+  content        String   @db.Text
+  // Herramientas ejecutadas en este mensaje
+  toolCalls      Json?
+  toolResults    Json?
+  // Tokens usados (para estimación de costos)
+  inputTokens    Int?
+  outputTokens   Int?
+  // Si el mensaje contiene un diff de código propuesto
+  hasDiff        Boolean  @default(false)
+  diffApplied    Boolean?
+  createdAt      DateTime @default(now())
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+// ─── Agente Autónomo ──────────────────────────────────────────────────────────
+
+model AgentTask {
+  id          String          @id @default(cuid())
+  userId      String
+  projectId   String
+  title       String
+  objective   String          @db.Text
+  mode        AgentMode       @default(AGENT)
+  status      AgentTaskStatus @default(PENDING)
+  plan        Json?           // Plan generado por el agente
+  result      String?         @db.Text
+  errorMessage String?        @db.Text
+  // Permisos otorgados para esta tarea
+  permissions Json?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  user       User             @relation(fields: [userId], references: [id])
+  project    Project          @relation(fields: [projectId], references: [id])
+  executions AgentExecution[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([status])
+  @@map("agent_tasks")
+}
+
+model AgentExecution {
+  id          String          @id @default(cuid())
+  taskId      String
+  stepNumber  Int
+  stepTitle   String
+  description String?         @db.Text
+  status      AgentStepStatus @default(PENDING)
+  // Herramienta ejecutada
+  toolName    String?
+  toolInput   Json?
+  toolOutput  Json?
+  errorMessage String?        @db.Text
+  requiresApproval Boolean    @default(false)
+  approvedAt  DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  task AgentTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("agent_executions")
+}
+
+// ─── Ejecución de Código ──────────────────────────────────────────────────────
+
+model ExecutionLog {
+  id          String          @id @default(cuid())
+  projectId   String
+  // Comando ejecutado (sin argumentos secretos)
+  command     String
+  exitCode    Int?
+  status      ExecutionStatus @default(QUEUED)
+  // Salida stdout/stderr (limitada)
+  stdout      String?         @db.Text
+  stderr      String?         @db.Text
+  // Estadísticas
+  durationMs  Int?
+  containerId String?         // ID del contenedor Docker usado
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime        @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+  @@index([status])
+  @@map("execution_logs")
+}
+
+// ─── Configuración de Modelos IA ──────────────────────────────────────────────
+
+model ModelConfiguration {
+  id          String     @id @default(cuid())
+  userId      String
+  name        String     // Nombre amigable para el usuario
+  provider    AIProvider
+  modelId     String     // ID del modelo del proveedor
+  // API key cifrada — NUNCA almacenar en texto plano
+  apiKeyEncrypted String? @db.Text
+  baseUrl     String?    // Para Ollama o proveedores custom
+  // Parámetros del modelo
+  temperature Float?     @default(0.7)
+  maxTokens   Int?
+  topP        Float?
+  // Configuración adicional del proveedor
+  config      Json?
+  isDefault   Boolean    @default(false)
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("model_configurations")
+}
+
+// ─── Integración Git/GitHub ───────────────────────────────────────────────────
+
+model GitConnection {
+  id             String   @id @default(cuid())
+  userId         String
+  projectId      String   @unique
+  provider       String   @default("github")
+  // Nombre del repositorio remoto
+  repoFullName   String?  // "owner/repo"
+  remoteUrl      String?
+  defaultBranch  String   @default("main")
+  // Token de acceso cifrado
+  accessTokenEncrypted String? @db.Text
+  // Última sincronización
+  lastSyncAt     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("git_connections")
+}
+
+// ─── Auditoría ────────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String      @id @default(cuid())
+  userId     String?
+  action     AuditAction
+  // Recurso afectado (projectId, fileId, etc.)
+  resourceId   String?
+  resourceType String?
+  // Detalles de la acción (sin datos sensibles)
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  success    Boolean     @default(true)
+  errorMessage String?
+  createdAt  DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

@@ -1,0 +1,127 @@
+version: "3.9"
+
+services:
+  # ─── Base de datos PostgreSQL ─────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: devpilot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-devpilot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devpilot_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-devpilot_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - devpilot-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-devpilot} -d ${POSTGRES_DB:-devpilot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ─── Redis (sesiones y caché) ─────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: devpilot-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis_secret}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - devpilot-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${REDIS_PASSWORD:-redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─── API Backend (NestJS) ─────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+      target: development
+    container_name: devpilot-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-devpilot}:${POSTGRES_PASSWORD:-devpilot_secret}@postgres:5432/${POSTGRES_DB:-devpilot_db}"
+      REDIS_URL: "redis://:${REDIS_PASSWORD:-redis_secret}@redis:6379"
+      JWT_SECRET: ${JWT_SECRET:-cambiar_en_produccion}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      REFRESH_TOKEN_SECRET: ${REFRESH_TOKEN_SECRET:-cambiar_en_produccion}
+      REFRESH_TOKEN_EXPIRES_IN: ${REFRESH_TOKEN_EXPIRES_IN:-30d}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:3001/auth/github/callback}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      WORKSPACE_BASE_PATH: /devpilot-workspace
+      DOCKER_ENABLED: "false"
+      RATE_LIMIT_TTL: ${RATE_LIMIT_TTL:-60}
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-100}
+      API_PORT: 3001
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/api:/app/apps/api
+      - ./packages:/app/packages
+      - ./prisma:/app/prisma
+      - workspace_data:/devpilot-workspace
+      - /app/apps/api/node_modules
+      - /app/node_modules
+    networks:
+      - devpilot-network
+    # NOTA: No se monta el Docker socket — ejecución de código se maneja
+    # por contenedores separados con permisos mínimos (ver services/execution-runner)
+
+  # ─── Frontend (Next.js) ───────────────────────────────────────────────────
+  web:
+    build:
+      context: .
+      dockerfile: ./apps/web/Dockerfile
+      target: development
+    container_name: devpilot-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      NEXT_PUBLIC_WS_URL: ws://localhost:3001
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/web:/app/apps/web
+      - ./packages:/app/packages
+      - /app/apps/web/node_modules
+      - /app/apps/web/.next
+      - /app/node_modules
+    networks:
+      - devpilot-network
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  workspace_data:
+    driver: local
+
+networks:
+  devpilot-network:
+    driver: bridge
+    name: devpilot-network
