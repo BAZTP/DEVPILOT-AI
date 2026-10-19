@@ -78,7 +78,7 @@ export default function HomePage() {
           {/* Badge */}
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-electric-500/30 bg-electric-500/10 text-electric-400 text-xs font-medium mb-8">
             <Zap className="w-3 h-3" />
-            Fase 1 — MVP en construcción
+            Fase 2 — Interfaz Profesional e IDE Activos
           </div>
 
           {/* Título */}
@@ -99,19 +99,14 @@ export default function HomePage() {
 
           {/* CTAs */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-20">
-            <Link href="/auth/login" className="ide-btn-primary px-8 py-3 text-base">
+            <Link href="/ide" className="ide-btn-primary px-8 py-3 text-base">
               <Play className="w-4 h-4" />
-              Iniciar ahora
+              Abrir IDE Completo
             </Link>
-            <a
-              href="https://github.com/BAZTP/DEVPILOT-AI"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ide-btn-secondary px-8 py-3 text-base"
-            >
+            <Link href="/dashboard" className="ide-btn-secondary px-8 py-3 text-base">
               <Code2 className="w-4 h-4" />
-              Ver código
-            </a>
+              Panel de Control
+            </Link>
           </div>
 
           {/* Preview del IDE (placeholder visual) */}

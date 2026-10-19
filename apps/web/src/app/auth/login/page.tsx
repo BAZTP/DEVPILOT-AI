@@ -65,12 +65,12 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <button
-            type="button"
-            className="ide-btn-primary w-full py-2.5 text-sm"
+          <Link
+            href="/dashboard"
+            className="ide-btn-primary w-full py-2.5 text-sm text-center flex items-center justify-center"
           >
-            Iniciar sesión
-          </button>
+            Iniciar sesión y Abrir Dashboard
+          </Link>
 
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
