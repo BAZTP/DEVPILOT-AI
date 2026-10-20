@@ -299,4 +299,81 @@ export async function cancelSandboxExecution(
   });
 }
 
+// ─── Control de Versiones Git & GitHub ─────────────────────────────────────────
+
+export interface GitStatusSummaryDto {
+  branch: string;
+  isClean: boolean;
+  ahead: number;
+  behind: number;
+  stagedFiles: Array<{ path: string; status: string; staged: boolean }>;
+  unstagedFiles: Array<{ path: string; status: string; staged: boolean }>;
+  untrackedFiles: Array<{ path: string; status: string; staged: boolean }>;
+}
+
+export async function fetchGitStatusRemote(
+  projectId: string
+): Promise<GitStatusSummaryDto> {
+  return request<GitStatusSummaryDto>(`/git/status/${projectId}`);
+}
+
+export async function stageGitFilesRemote(
+  projectId: string,
+  files?: string[] | undefined
+): Promise<GitStatusSummaryDto> {
+  return request<GitStatusSummaryDto>(`/git/stage/${projectId}`, {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
+export async function unstageGitFilesRemote(
+  projectId: string,
+  files?: string[] | undefined
+): Promise<GitStatusSummaryDto> {
+  return request<GitStatusSummaryDto>(`/git/unstage/${projectId}`, {
+    method: "POST",
+    body: JSON.stringify({ files }),
+  });
+}
+
+export async function commitGitRemote(
+  projectId: string,
+  message: string,
+  authorName?: string | undefined,
+  authorEmail?: string | undefined
+): Promise<{ commitSha: string; summary: string }> {
+  return request<{ commitSha: string; summary: string }>(
+    `/git/commit/${projectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message, authorName, authorEmail }),
+    }
+  );
+}
+
+export async function pushGitRemote(
+  projectId: string,
+  confirmed: boolean,
+  remote = "origin",
+  branch?: string | undefined
+): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(
+    `/git/push/${projectId}`,
+    {
+      method: "POST",
+      body: JSON.stringify({ confirmed, remote, branch }),
+    }
+  );
+}
+
+export async function fetchGitDiffRemote(
+  projectId: string,
+  file?: string | undefined
+): Promise<{ diff: string }> {
+  const enc = file ? `?file=${encodeURIComponent(file)}` : "";
+  return request<{ diff: string }>(`/git/diff/${projectId}${enc}`);
+}
+
+
 
