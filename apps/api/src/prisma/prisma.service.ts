@@ -28,9 +28,8 @@ export class PrismaService
     try {
       await this.$connect();
       this.logger.log("✅ Conectado a PostgreSQL");
-    } catch (error) {
-      this.logger.error("❌ Error al conectar con PostgreSQL:", error);
-      throw error;
+    } catch (error: any) {
+      this.logger.warn(`⚠️ PostgreSQL no disponible (${error?.message}). Operando con almacenamiento en memoria.`);
     }
   }
 
