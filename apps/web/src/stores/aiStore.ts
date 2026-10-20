@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { AgentTaskDataDto, AgentStepPlanDto } from "@/lib/api";
 
 export type AIMode = "CHAT" | "PLAN" | "EDIT" | "AGENT";
 
@@ -40,6 +41,10 @@ interface AIState {
   isGenerating: boolean;
   apiKeyPromptVisible: boolean;
 
+  // Estado del Agente Autónomo Supervisado
+  activeAgentTask: AgentTaskDataDto | null;
+  isAgentRunning: boolean;
+
   // Acciones
   setMode: (mode: AIMode) => void;
   setModel: (modelId: string) => void;
@@ -53,6 +58,9 @@ interface AIState {
   clearMessages: () => void;
   applyDiffProposal: (messageId: string) => void;
   setApiKeyPromptVisible: (visible: boolean) => void;
+  setActiveAgentTask: (task: AgentTaskDataDto | null) => void;
+  updateAgentStep: (stepId: string, partial: Partial<AgentStepPlanDto>) => void;
+  setAgentRunning: (running: boolean) => void;
 }
 
 const DEFAULT_MODELS: AIModelOption[] = [
@@ -104,9 +112,28 @@ export const useAIStore = create<AIState>((set) => ({
   contextFiles: ["src/app/page.tsx"],
   isGenerating: false,
   apiKeyPromptVisible: false,
+  activeAgentTask: null,
+  isAgentRunning: false,
 
   setMode: (mode) => set({ currentMode: mode }),
   setModel: (modelId) => set({ selectedModelId: modelId }),
+
+  setActiveAgentTask: (task) => set({ activeAgentTask: task }),
+  setAgentRunning: (running) => set({ isAgentRunning: running }),
+
+  updateAgentStep: (stepId, partial) =>
+    set((state) => {
+      if (!state.activeAgentTask) return state;
+      const updatedSteps = state.activeAgentTask.steps.map((s) =>
+        s.id === stepId ? { ...s, ...partial } : s
+      );
+      return {
+        activeAgentTask: {
+          ...state.activeAgentTask,
+          steps: updatedSteps,
+        },
+      };
+    }),
 
   addMessage: (msg) => {
     const newMessage: ChatMessage = {

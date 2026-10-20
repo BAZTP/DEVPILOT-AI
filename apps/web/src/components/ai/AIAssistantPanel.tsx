@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Sparkles,
   Send,
@@ -21,12 +21,29 @@ import {
   CheckCircle2,
   Clock,
   Loader2,
+  ShieldAlert,
+  AlertTriangle,
+  StopCircle,
+  Terminal,
+  ExternalLink,
+  ChevronRight,
 } from "lucide-react";
 import { useAIStore, AIMode } from "@/stores/aiStore";
 import { useEditorStore } from "@/stores/editorStore";
 import { useLayoutStore } from "@/stores/layoutStore";
 import { useProjectStore } from "@/stores/projectStore";
-import { streamAIChat, applyDiffRemote } from "@/lib/api";
+import {
+  streamAIChat,
+  applyDiffRemote,
+  startAgentTaskRemote,
+  approveAgentStepRemote,
+  rejectAgentStepRemote,
+  cancelAgentTaskRemote,
+  streamAgentEventsRemote,
+  AgentTaskDataDto,
+  AgentStepPlanDto,
+  AgentEventMessageDto,
+} from "@/lib/api";
 
 export const AIAssistantPanel: React.FC = () => {
   const {
@@ -36,6 +53,8 @@ export const AIAssistantPanel: React.FC = () => {
     messages,
     contextFiles,
     isGenerating,
+    activeAgentTask,
+    isAgentRunning,
     setMode,
     setModel,
     addMessage,
@@ -47,6 +66,9 @@ export const AIAssistantPanel: React.FC = () => {
     addContextFile,
     clearMessages,
     applyDiffProposal,
+    setActiveAgentTask,
+    updateAgentStep,
+    setAgentRunning,
   } = useAIStore();
 
   const { projectId } = useProjectStore();
@@ -55,13 +77,21 @@ export const AIAssistantPanel: React.FC = () => {
 
   const [inputPrompt, setInputPrompt] = useState("");
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
+  const [activeSandboxLog, setActiveSandboxLog] = useState<{
+    cmd: string;
+    stdout: string;
+    stderr: string;
+    exitCode: number;
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const isResizingRef = useRef(false);
+  const unsubscribeAgentStreamRef = useRef<(() => void) | null>(null);
 
-  // Auto-scroll al final al recibir mensajes
+  // Auto-scroll al final al recibir mensajes o tareas
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isGenerating]);
+  }, [messages, isGenerating, activeAgentTask]);
 
   // Manejador de redimensionamiento
   useEffect(() => {
@@ -86,7 +116,16 @@ export const AIAssistantPanel: React.FC = () => {
     };
   }, [setAIPanelWidth]);
 
-  // Si el archivo activo no está en el contexto, agregarlo
+  // Limpiar suscripción SSE de agente al desmontar
+  useEffect(() => {
+    return () => {
+      if (unsubscribeAgentStreamRef.current) {
+        unsubscribeAgentStreamRef.current();
+      }
+    };
+  }, []);
+
+  // Agregar archivo activo al contexto automáticamente
   useEffect(() => {
     if (activeFilePath && !contextFiles.includes(activeFilePath)) {
       addContextFile(activeFilePath);
@@ -97,18 +136,132 @@ export const AIAssistantPanel: React.FC = () => {
 
   const currentModel = availableModels.find((m) => m.id === selectedModelId) || availableModels[0]!;
 
+  // ── Iniciar Misión en Modo Agente Autónomo Supervisado ──────────────────────
+  const handleStartAgentTask = async () => {
+    const objective = inputPrompt.trim();
+    if (!objective || isAgentRunning) return;
+
+    setInputPrompt("");
+    setAgentRunning(true);
+    setActiveSandboxLog(null);
+
+    try {
+      const task = await startAgentTaskRemote(
+        projectId || "devpilot-demo-app",
+        objective,
+        currentMode === "PLAN" ? "PLAN" : "AGENT",
+        false
+      );
+
+      setActiveAgentTask(task);
+
+      // Suscribirse al stream SSE para recibir progreso y validaciones en tiempo real
+      if (unsubscribeAgentStreamRef.current) {
+        unsubscribeAgentStreamRef.current();
+      }
+
+      unsubscribeAgentStreamRef.current = streamAgentEventsRemote(
+        task.id,
+        (event: AgentEventMessageDto) => {
+          if (event.type === "step_started" && event.stepId) {
+            updateAgentStep(event.stepId, { status: "RUNNING" });
+          } else if (event.type === "step_awaiting_approval" && event.stepId) {
+            updateAgentStep(event.stepId, {
+              status: "AWAITING_APPROVAL",
+              approvalReason: event.data?.reason,
+            });
+          } else if (event.type === "step_approved" && event.stepId) {
+            updateAgentStep(event.stepId, { status: "RUNNING" });
+          } else if (event.type === "step_completed" && event.stepId) {
+            updateAgentStep(event.stepId, { status: "COMPLETED", output: event.data?.output });
+          } else if (event.type === "step_failed" && event.stepId) {
+            updateAgentStep(event.stepId, { status: "FAILED", error: event.message });
+          } else if (event.type === "sandbox_output" && event.data) {
+            setActiveSandboxLog({
+              cmd: event.data.command || "Validación de pruebas",
+              stdout: event.data.stdout || "",
+              stderr: event.data.stderr || "",
+              exitCode: event.data.exitCode ?? 0,
+            });
+          } else if (event.type === "task_completed") {
+            setAgentRunning(false);
+            setActiveAgentTask({
+              ...task,
+              status: "COMPLETED",
+              summary: event.data?.summary || "Misión completada con éxito.",
+            });
+          } else if (event.type === "task_cancelled") {
+            setAgentRunning(false);
+            setActiveAgentTask({
+              ...task,
+              status: "CANCELLED",
+              summary: "La misión fue detenida por el usuario.",
+            });
+          }
+        },
+        (err) => {
+          console.warn("[DevPilot Agent Stream Error]", err);
+        }
+      );
+    } catch (err: any) {
+      console.error("Error al iniciar agente:", err);
+      setAgentRunning(false);
+    }
+  };
+
+  // ── Aprobar paso pendiente (Human-in-the-Loop) ──────────────────────────────
+  const handleApproveStep = async (stepId: string) => {
+    if (!activeAgentTask) return;
+    try {
+      await approveAgentStepRemote(activeAgentTask.id, stepId, true);
+      updateAgentStep(stepId, { status: "RUNNING" });
+    } catch (err) {
+      console.error("Error al aprobar paso:", err);
+    }
+  };
+
+  // ── Rechazar paso pendiente ─────────────────────────────────────────────────
+  const handleRejectStep = async (stepId: string) => {
+    if (!activeAgentTask) return;
+    try {
+      await rejectAgentStepRemote(activeAgentTask.id, stepId, "Rechazado por el usuario.");
+      updateAgentStep(stepId, { status: "SKIPPED" });
+    } catch (err) {
+      console.error("Error al rechazar paso:", err);
+    }
+  };
+
+  // ── Cancelar tarea activa del agente ─────────────────────────────────────────
+  const handleCancelTask = async () => {
+    if (!activeAgentTask) return;
+    try {
+      await cancelAgentTaskRemote(activeAgentTask.id);
+      setAgentRunning(false);
+      setActiveAgentTask({
+        ...activeAgentTask,
+        status: "CANCELLED",
+      });
+    } catch (err) {
+      console.error("Error al cancelar agente:", err);
+    }
+  };
+
+  // ── Flujo estándar de Chat / Plan / Edit ──────────────────────────────────────
   const handleSendMessage = async () => {
+    if (currentMode === "AGENT") {
+      handleStartAgentTask();
+      return;
+    }
+
     const prompt = inputPrompt.trim();
     if (!prompt || isGenerating) return;
 
-    // 1. Agregar mensaje de usuario
     addMessage({
       role: "user",
       content: prompt,
       mode: currentMode,
     });
 
-    // 2. Preparar mensaje del asistente vacío para acumular streaming
     addMessage({
       role: "assistant",
       content: "",
@@ -146,45 +299,21 @@ export const AIAssistantPanel: React.FC = () => {
           }
         }
       );
-    } catch (err: any) {
-      console.warn("[DevPilot] Fallback a motor local:", err.message);
-      // Fallback local enriquecido si el servidor backend está temporalmente no disponible
-      if (currentMode === "CHAT") {
-        updateLastAssistantMessage(
-          `Entendido. Analizando tu código en \`${activeFilePath || "el workspace"}\`:\n\nPara resolver esto, te recomiendo modularizar la lógica separando la presentación del estado. Aquí tienes una estructura recomendada:\n\n\`\`\`typescript\ninterface ConfigOptions {\n  strictMode: boolean;\n  timeoutMs: number;\n}\n\nexport function initializeService(options: ConfigOptions) {\n  console.log('Servicio iniciado con timeout:', options.timeoutMs);\n}\n\`\`\`\n\n¿Quieres que prepare un cambio directo en tu archivo?`
-        );
-      } else if (currentMode === "PLAN") {
-        updateLastAssistantMessage(
-          `### 📋 Plan de Acción para: "${prompt}"\n\nHe elaborado un desglose paso a paso para abordar este objetivo de forma segura:\n\n1. **Análisis de dependencias**: Verificar importaciones y exports existentes.\n2. **Definición de tipos**: Crear contratos e interfaces TypeScript estrictas.\n3. **Implementación de componentes**: Construir elementos reutilizables.\n4. **Pruebas unitarias**: Validar casos límite con Vitest.\n5. **Revisión de seguridad**: Asegurar que no existan fugas ni inyecciones.\n\n¿Deseas que ejecute el primer paso?`
-        );
-      } else if (currentMode === "EDIT") {
-        const activeFile = openFiles.find((f) => f.path === activeFilePath);
-        const original = activeFile?.content || "// Código original";
-        const modified = `${original}\n// ✨ Agregado por DevPilot AI:\nexport const version = "1.0.0";\n`;
-
-        updateLastAssistantMessage(`He preparado la modificación para \`${activeFilePath || "archivo actual"}\`. Revisa la propuesta antes de aplicar los cambios:`);
-        updateLastAssistantProposal({
-          proposalId: `diff-${Date.now()}`,
-          filePath: activeFilePath || "src/app/page.tsx",
-          originalCode: original,
-          proposedCode: modified,
-          applied: false,
-        });
-      } else if (currentMode === "AGENT") {
-        updateLastAssistantMessage(`🤖 **Modo Agent iniciado:** Objetivo recibido: "${prompt}".\nEjecutando plan supervisado:`);
-        updateLastAssistantSteps([
-          { id: "1", title: "Inspeccionar estructura del proyecto", status: "completed" },
-          { id: "2", title: "Analizar dependencias de TypeScript", status: "completed" },
-          { id: "3", title: "Proponer archivo de utilidades", status: "running" },
-          { id: "4", title: "Ejecutar validación de pruebas", status: "pending" },
-        ]);
-      }
+    } catch {
+      updateLastAssistantMessage(
+        `He analizado tu solicitud. ¿Deseas que formulemos los cambios directamente en ${
+          activeFilePath || "el proyecto"
+        }?`
+      );
     } finally {
       setGenerating(false);
     }
   };
 
-  const handleApplyDiff = async (msgId: string, diff: NonNullable<(typeof messages)[0]["diffProposal"]>) => {
+  const handleApplyDiff = async (
+    msgId: string,
+    diff: NonNullable<(typeof messages)[0]["diffProposal"]>
+  ) => {
     updateFileContent(diff.filePath, diff.proposedCode);
     saveFile(diff.filePath);
     applyDiffProposal(msgId);
@@ -317,118 +446,272 @@ export const AIAssistantPanel: React.FC = () => {
         ))}
       </div>
 
-      {/* ── Lista de mensajes ──────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-3">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex flex-col gap-1 ${
-              msg.role === "user" ? "items-end" : "items-start"
-            }`}
-          >
-            <div className="flex items-center gap-1.5 text-[10px] text-ide-text-muted px-1">
-              {msg.role === "user" ? (
-                <>
-                  <span>Tú</span>
-                  <span>·</span>
-                  <span>{msg.timestamp}</span>
-                </>
-              ) : (
-                <>
-                  <Bot className="w-3 h-3 text-violet-400" />
-                  <span>DevPilot Assistant</span>
-                  <span>·</span>
-                  <span>{msg.timestamp}</span>
-                </>
-              )}
+      {/* ── Vista de Modo AGENTE AUTÓNOMO SUPERVISADO ──────────────────────── */}
+      {currentMode === "AGENT" && activeAgentTask ? (
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {/* Tarjeta de Encabezado de la Misión */}
+          <div className="p-3 rounded-xl bg-surface-850 border border-ide-border space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-2xs font-semibold text-violet-400 uppercase tracking-wider flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5" />
+                Misión del Agente
+              </span>
+              <span
+                className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold uppercase ${
+                  activeAgentTask.steps.some((s) => s.status === "AWAITING_APPROVAL") || activeAgentTask.status === "PAUSED"
+                    ? "bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse"
+                    : activeAgentTask.status === "RUNNING"
+                    ? "bg-electric-500/20 text-electric-400 border border-electric-500/30"
+                    : activeAgentTask.status === "COMPLETED"
+                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                    : "bg-red-500/20 text-red-400 border border-red-500/30"
+                }`}
+              >
+                {activeAgentTask.steps.some((s) => s.status === "AWAITING_APPROVAL")
+                  ? "AWAITING_APPROVAL"
+                  : activeAgentTask.status}
+              </span>
             </div>
 
+            <p className="text-xs font-medium text-ide-text">{activeAgentTask.objective}</p>
+
+            <div className="flex items-center justify-between text-2xs text-ide-text-muted pt-1">
+              <span>{activeAgentTask.steps.length} pasos programados</span>
+              {isAgentRunning && (
+                <button
+                  onClick={handleCancelTask}
+                  className="flex items-center gap-1 text-red-400 hover:text-red-300 text-2xs py-0.5 px-2 rounded bg-red-950/40 border border-red-800/40"
+                >
+                  <StopCircle className="w-3 h-3" />
+                  Detener Agente
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Tarjeta de Aprobación Humana (Human-in-the-Loop) */}
+          {activeAgentTask.steps.some((s) => s.status === "AWAITING_APPROVAL") && (
+            <div className="p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 space-y-2 animate-fade-in">
+              {activeAgentTask.steps
+                .filter((s) => s.status === "AWAITING_APPROVAL")
+                .map((step) => (
+                  <div key={step.id} className="space-y-2">
+                    <div className="flex items-start gap-2 text-amber-300">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
+                      <div>
+                        <span className="font-semibold text-2xs uppercase tracking-wide">
+                          Paso {step.stepNumber}: Autorización Requerida
+                        </span>
+                        <p className="text-xs text-ide-text mt-0.5">{step.title}</p>
+                        {step.approvalReason && (
+                          <p className="text-2xs text-amber-300/80 mt-1 italic">
+                            {step.approvalReason}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <button
+                        onClick={() => handleApproveStep(step.id)}
+                        className="ide-btn-primary flex-1 py-1.5 text-2xs flex items-center justify-center gap-1 bg-amber-600 hover:bg-amber-500 border-amber-400 text-white"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                        Aprobar y Continuar
+                      </button>
+                      <button
+                        onClick={() => handleRejectStep(step.id)}
+                        className="ide-btn-secondary py-1.5 px-3 text-2xs flex items-center justify-center gap-1 hover:text-red-400"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        Rechazar
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {/* Checklist interactivo de pasos */}
+          <div className="p-3 rounded-xl bg-surface-850 border border-ide-border space-y-2">
+            <div className="text-2xs font-semibold text-ide-text-muted uppercase tracking-wider mb-2">
+              Plan de Ejecución Supervisado
+            </div>
+
+            <div className="space-y-2">
+              {activeAgentTask.steps.map((step) => (
+                <div
+                  key={step.id}
+                  className={`p-2 rounded-lg border text-xs transition-colors ${
+                    step.status === "RUNNING"
+                      ? "bg-electric-950/40 border-electric-500/40 text-electric-200"
+                      : step.status === "AWAITING_APPROVAL"
+                      ? "bg-amber-950/30 border-amber-500/30 text-amber-200"
+                      : step.status === "COMPLETED"
+                      ? "bg-surface-900 border-ide-border/60 text-ide-text"
+                      : "bg-surface-900/50 border-ide-border/40 text-ide-text-muted"
+                  }`}
+                >
+                  <div className="flex items-center gap-2">
+                    {step.status === "COMPLETED" && (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                    )}
+                    {step.status === "RUNNING" && (
+                      <Loader2 className="w-4 h-4 text-electric-400 animate-spin shrink-0" />
+                    )}
+                    {step.status === "AWAITING_APPROVAL" && (
+                      <AlertTriangle className="w-4 h-4 text-amber-400 animate-pulse shrink-0" />
+                    )}
+                    {step.status === "FAILED" && (
+                      <X className="w-4 h-4 text-red-400 shrink-0" />
+                    )}
+                    {step.status === "PENDING" && (
+                      <Clock className="w-4 h-4 text-ide-text-muted shrink-0" />
+                    )}
+                    {step.status === "SKIPPED" && (
+                      <span className="w-4 h-4 rounded-full border border-ide-text-muted flex items-center justify-center text-[9px] text-ide-text-muted">
+                        -
+                      </span>
+                    )}
+
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-2xs truncate">
+                        {step.stepNumber}. {step.title}
+                      </div>
+                      <div className="text-[11px] text-ide-text-muted truncate">
+                        {step.description}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Tarjeta de Ejecución en Sandbox Docker */}
+          {activeSandboxLog && (
+            <div className="p-3 rounded-xl bg-surface-950 border border-ide-border space-y-1.5 font-mono text-[11px]">
+              <div className="flex items-center justify-between text-2xs text-ide-text-muted pb-1 border-b border-ide-border/60">
+                <span className="flex items-center gap-1.5 text-electric-400 font-semibold">
+                  <Terminal className="w-3.5 h-3.5" />
+                  Salida de Sandbox Docker
+                </span>
+                <span
+                  className={`text-[9px] px-1.5 py-0.5 rounded ${
+                    activeSandboxLog.exitCode === 0
+                      ? "bg-emerald-950 text-emerald-400 border border-emerald-800"
+                      : "bg-red-950 text-red-400 border border-red-800"
+                  }`}
+                >
+                  Exit Code: {activeSandboxLog.exitCode}
+                </span>
+              </div>
+              <div className="text-ide-text-muted">$ {activeSandboxLog.cmd}</div>
+              {activeSandboxLog.stdout && (
+                <div className="text-emerald-300 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                  {activeSandboxLog.stdout}
+                </div>
+              )}
+              {activeSandboxLog.stderr && (
+                <div className="text-red-400 max-h-32 overflow-y-auto whitespace-pre-wrap">
+                  {activeSandboxLog.stderr}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Resumen Final cuando se completa */}
+          {activeAgentTask.status === "COMPLETED" && (
+            <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 space-y-1">
+              <div className="flex items-center gap-1.5 font-semibold text-2xs uppercase tracking-wider text-emerald-400">
+                <Check className="w-3.5 h-3.5" />
+                Misión Finalizada
+              </div>
+              <p className="text-xs text-ide-text">{activeAgentTask.summary}</p>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* ── Lista de mensajes del Chat estándar ────────────────────────── */
+        <div className="flex-1 overflow-y-auto p-3 space-y-3">
+          {messages.map((msg) => (
             <div
-              className={`max-w-[92%] rounded-xl p-3 text-xs leading-relaxed ${
-                msg.role === "user"
-                  ? "bg-electric-600 text-white rounded-tr-none shadow-sm"
-                  : "bg-surface-850 border border-ide-border text-ide-text rounded-tl-none shadow-sm"
+              key={msg.id}
+              className={`flex flex-col gap-1 ${
+                msg.role === "user" ? "items-end" : "items-start"
               }`}
             >
-              <div className="whitespace-pre-wrap">{msg.content}</div>
+              <div className="flex items-center gap-1.5 text-[10px] text-ide-text-muted px-1">
+                {msg.role === "user" ? (
+                  <>
+                    <span>Tú</span>
+                    <span>·</span>
+                    <span>{msg.timestamp}</span>
+                  </>
+                ) : (
+                  <>
+                    <Bot className="w-3 h-3 text-violet-400" />
+                    <span>DevPilot Assistant</span>
+                    <span>·</span>
+                    <span>{msg.timestamp}</span>
+                  </>
+                )}
+              </div>
 
-              {/* Si contiene propuesta de Diff */}
-              {msg.diffProposal && (
-                <div className="mt-3 p-2 rounded-lg bg-surface-900 border border-ide-border/80">
-                  <div className="flex items-center justify-between text-2xs font-mono text-ide-text-muted mb-2">
-                    <span className="text-electric-400">{msg.diffProposal.filePath}</span>
-                    <span>Modificaciones listas</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => handleViewDiff(msg.diffProposal!)}
-                      className="ide-btn-secondary py-1 text-2xs flex-1 flex items-center justify-center gap-1"
-                    >
-                      <GitCompare className="w-3 h-3" />
-                      <span>Ver Diferencias</span>
-                    </button>
-                    {msg.diffProposal.applied ? (
-                      <span className="flex items-center gap-1 text-ide-success font-medium text-2xs px-2">
-                        <Check className="w-3.5 h-3.5" /> Aplicado
-                      </span>
-                    ) : (
-                      <button
-                        onClick={() => handleApplyDiff(msg.id, msg.diffProposal!)}
-                        className="ide-btn-primary py-1 text-2xs flex-1 flex items-center justify-center gap-1 shadow-sm"
-                      >
-                        <Check className="w-3 h-3" />
-                        <span>Aplicar cambios</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
+              <div
+                className={`max-w-[92%] rounded-xl p-3 text-xs leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-electric-600 text-white rounded-tr-none shadow-sm"
+                    : "bg-surface-850 border border-ide-border text-ide-text rounded-tl-none shadow-sm"
+                }`}
+              >
+                <div className="whitespace-pre-wrap">{msg.content}</div>
 
-              {/* Si está en modo Agent con pasos */}
-              {msg.agentSteps && (
-                <div className="mt-3 p-2.5 rounded-lg bg-surface-900 border border-ide-border/80 space-y-1.5">
-                  <div className="text-2xs font-semibold text-ide-text-muted uppercase tracking-wider mb-1">
-                    Progreso de la tarea
-                  </div>
-                  {msg.agentSteps.map((step, idx) => (
-                    <div key={idx} className="flex items-center gap-2 text-2xs">
-                      {step.status === "completed" && (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-ide-success shrink-0" />
-                      )}
-                      {step.status === "running" && (
-                        <Loader2 className="w-3.5 h-3.5 text-electric-400 animate-spin shrink-0" />
-                      )}
-                      {step.status === "pending" && (
-                        <Clock className="w-3.5 h-3.5 text-ide-text-muted shrink-0" />
-                      )}
-                      <span
-                        className={
-                          step.status === "completed"
-                            ? "text-ide-text line-through opacity-70"
-                            : step.status === "running"
-                            ? "text-electric-300 font-semibold"
-                            : "text-ide-text-muted"
-                        }
-                      >
-                        {step.title}
-                      </span>
+                {/* Si contiene propuesta de Diff */}
+                {msg.diffProposal && (
+                  <div className="mt-3 p-2 rounded-lg bg-surface-900 border border-ide-border/80">
+                    <div className="flex items-center justify-between text-2xs font-mono text-ide-text-muted mb-2">
+                      <span className="text-electric-400">{msg.diffProposal.filePath}</span>
+                      <span>Modificaciones listas</span>
                     </div>
-                  ))}
-                </div>
-              )}
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleViewDiff(msg.diffProposal!)}
+                        className="ide-btn-secondary py-1 text-2xs flex-1 flex items-center justify-center gap-1"
+                      >
+                        <GitCompare className="w-3 h-3" />
+                        <span>Ver Diferencias</span>
+                      </button>
+                      {msg.diffProposal.applied ? (
+                        <span className="flex items-center gap-1 text-ide-success font-medium text-2xs px-2">
+                          <Check className="w-3.5 h-3.5" /> Aplicado
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => handleApplyDiff(msg.id, msg.diffProposal!)}
+                          className="ide-btn-primary py-1 text-2xs flex-1 flex items-center justify-center gap-1 shadow-sm"
+                        >
+                          <Check className="w-3 h-3" />
+                          <span>Aplicar cambios</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
 
-        {isGenerating && (
-          <div className="flex items-center gap-2 p-2 text-xs text-ide-text-muted font-mono animate-pulse">
-            <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" />
-            <span>DevPilot está pensando...</span>
-          </div>
-        )}
+          {isGenerating && (
+            <div className="flex items-center gap-2 p-2 text-xs text-ide-text-muted font-mono animate-pulse">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-violet-400" />
+              <span>DevPilot está pensando...</span>
+            </div>
+          )}
 
-        <div ref={messagesEndRef} />
-      </div>
+          <div ref={messagesEndRef} />
+        </div>
+      )}
 
       {/* ── Chips de prompts rápidos ───────────────────────────────────────── */}
       <div className="px-3 py-1.5 border-t border-ide-border bg-surface-900/30 flex items-center gap-1.5 overflow-x-auto scrollbar-hide text-[11px]">
@@ -453,7 +736,11 @@ export const AIAssistantPanel: React.FC = () => {
         <div className="relative">
           <textarea
             rows={2}
-            placeholder={`Pregunta a DevPilot o solicita cambios (Modo: ${currentMode})...`}
+            placeholder={
+              currentMode === "AGENT"
+                ? "Define el objetivo del agente autónomo supervisado (Enter)..."
+                : `Pregunta a DevPilot o solicita cambios (Modo: ${currentMode})...`
+            }
             value={inputPrompt}
             onChange={(e) => setInputPrompt(e.target.value)}
             onKeyDown={(e) => {
@@ -466,11 +753,23 @@ export const AIAssistantPanel: React.FC = () => {
           />
           <button
             onClick={handleSendMessage}
-            disabled={!inputPrompt.trim() || isGenerating}
-            title="Enviar mensaje (Enter)"
-            className="absolute right-2 bottom-2.5 p-1.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white transition-colors"
+            disabled={!inputPrompt.trim() || isGenerating || isAgentRunning}
+            title={
+              currentMode === "AGENT"
+                ? "Iniciar Misión de Agente"
+                : "Enviar mensaje (Enter)"
+            }
+            className={`absolute right-2 bottom-2.5 p-1.5 rounded-lg disabled:opacity-40 text-white transition-colors ${
+              currentMode === "AGENT"
+                ? "bg-violet-600 hover:bg-violet-500"
+                : "bg-electric-600 hover:bg-electric-500"
+            }`}
           >
-            <Send className="w-3.5 h-3.5" />
+            {isAgentRunning ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Send className="w-3.5 h-3.5" />
+            )}
           </button>
         </div>
       </div>

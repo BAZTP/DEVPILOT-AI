@@ -375,5 +375,157 @@ export async function fetchGitDiffRemote(
   return request<{ diff: string }>(`/git/diff/${projectId}${enc}`);
 }
 
+// ─── Agente Autónomo Supervisado ──────────────────────────────────────────────
 
+export type AgentModeType = "CHAT" | "PLAN" | "EDIT" | "AGENT";
 
+export interface AgentStepPlanDto {
+  id: string;
+  stepNumber: number;
+  title: string;
+  description: string;
+  toolName: string;
+  toolInput?: Record<string, any> | undefined;
+  requiresApproval: boolean;
+  approvalReason?: string | undefined;
+  status:
+    | "PENDING"
+    | "RUNNING"
+    | "COMPLETED"
+    | "FAILED"
+    | "SKIPPED"
+    | "AWAITING_APPROVAL";
+  output?: any | undefined;
+  error?: string | undefined;
+}
+
+export interface AgentTaskDataDto {
+  id: string;
+  projectId: string;
+  title: string;
+  objective: string;
+  mode: AgentModeType;
+  status:
+    | "PENDING"
+    | "RUNNING"
+    | "PAUSED"
+    | "COMPLETED"
+    | "FAILED"
+    | "CANCELLED";
+  steps: AgentStepPlanDto[];
+  currentStepIndex: number;
+  summary?: string | undefined;
+  errorMessage?: string | undefined;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentEventMessageDto {
+  type:
+    | "task_started"
+    | "plan_generated"
+    | "step_started"
+    | "step_awaiting_approval"
+    | "step_approved"
+    | "step_rejected"
+    | "step_completed"
+    | "step_failed"
+    | "sandbox_output"
+    | "task_completed"
+    | "task_cancelled"
+    | "error"
+    | "initial_state";
+  taskId: string;
+  stepId?: string | undefined;
+  data?: any | undefined;
+  message?: string | undefined;
+  timestamp?: string | undefined;
+}
+
+export async function startAgentTaskRemote(
+  projectId: string,
+  objective: string,
+  mode: AgentModeType = "AGENT",
+  autoApproveSafeActions = false
+): Promise<AgentTaskDataDto> {
+  return request<AgentTaskDataDto>("/agent/start", {
+    method: "POST",
+    body: JSON.stringify({ projectId, objective, mode, autoApproveSafeActions }),
+  });
+}
+
+export async function fetchAgentTasksRemote(
+  projectId: string
+): Promise<AgentTaskDataDto[]> {
+  return request<AgentTaskDataDto[]>(`/agent/tasks/${projectId}`);
+}
+
+export async function fetchAgentTaskDetailsRemote(
+  taskId: string
+): Promise<AgentTaskDataDto> {
+  return request<AgentTaskDataDto>(`/agent/task/${taskId}`);
+}
+
+export async function approveAgentStepRemote(
+  taskId: string,
+  stepId: string,
+  approved: boolean,
+  reason?: string | undefined
+): Promise<AgentTaskDataDto> {
+  return request<AgentTaskDataDto>(`/agent/approve-step/${taskId}/${stepId}`, {
+    method: "POST",
+    body: JSON.stringify({ approved, reason }),
+  });
+}
+
+export async function rejectAgentStepRemote(
+  taskId: string,
+  stepId: string,
+  reason?: string | undefined
+): Promise<AgentTaskDataDto> {
+  return request<AgentTaskDataDto>(`/agent/reject-step/${taskId}/${stepId}`, {
+    method: "POST",
+    body: JSON.stringify({ approved: false, reason }),
+  });
+}
+
+export async function cancelAgentTaskRemote(
+  taskId: string
+): Promise<AgentTaskDataDto> {
+  return request<AgentTaskDataDto>(`/agent/cancel/${taskId}`, {
+    method: "POST",
+  });
+}
+
+export function streamAgentEventsRemote(
+  taskId: string,
+  onEvent: (event: AgentEventMessageDto) => void,
+  onError?: (err: any) => void
+): () => void {
+  const url = `${API_BASE_URL}/agent/stream/${taskId}`;
+  const eventSource = new EventSource(url);
+
+  eventSource.onmessage = (event) => {
+    try {
+      const parsed: AgentEventMessageDto = JSON.parse(event.data);
+      onEvent(parsed);
+      if (
+        parsed.type === "task_completed" ||
+        parsed.type === "task_cancelled"
+      ) {
+        eventSource.close();
+      }
+    } catch (e) {
+      if (onError) onError(e);
+    }
+  };
+
+  eventSource.onerror = (err) => {
+    if (onError) onError(err);
+    eventSource.close();
+  };
+
+  return () => {
+    eventSource.close();
+  };
+}
