@@ -8,6 +8,7 @@ import { AuthModule } from "./auth/auth.module";
 import { ProjectsModule } from "./projects/projects.module";
 import { FilesModule } from "./files/files.module";
 import { AiModule } from "./ai/ai.module";
+import { RunnerModule } from "./runner/runner.module";
 import { HealthModule } from "./health/health.module";
 import configuration from "./config/configuration";
 
@@ -46,6 +47,7 @@ import configuration from "./config/configuration";
     ProjectsModule,
     FilesModule,
     AiModule,
+    RunnerModule,
     HealthModule,
   ],
   controllers: [AppController],

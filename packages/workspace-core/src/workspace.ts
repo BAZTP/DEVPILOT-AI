@@ -41,6 +41,10 @@ export class WorkspaceManager {
     return projectDir;
   }
 
+  getProjectDirectory(projectId: string): string {
+    return resolveSafePath(this.baseDir, projectId);
+  }
+
   /**
    * Lee la estructura recursiva del árbol de archivos del proyecto.
    */

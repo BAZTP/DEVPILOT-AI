@@ -254,3 +254,49 @@ export async function fetchAIProviders(): Promise<
   );
 }
 
+// ─── Ejecución Aislada (Sandbox Runner) ──────────────────────────────────────
+
+export interface SandboxStatusResponse {
+  isDockerAvailable: boolean;
+  dockerVersion?: string | undefined;
+  activeContainersCount: number;
+  message: string;
+}
+
+export interface ExecutionResultResponse {
+  executionId: string;
+  projectId: string;
+  command: string;
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+  status: "COMPLETED" | "FAILED" | "TIMEOUT" | "CANCELLED";
+  startedAt: string;
+  completedAt: string;
+}
+
+export async function fetchSandboxStatus(): Promise<SandboxStatusResponse> {
+  return request<SandboxStatusResponse>("/runner/status");
+}
+
+export async function executeSandboxCommand(
+  projectId: string,
+  command: string,
+  timeoutMs = 30000
+): Promise<ExecutionResultResponse> {
+  return request<ExecutionResultResponse>("/runner/execute", {
+    method: "POST",
+    body: JSON.stringify({ projectId, command, timeoutMs }),
+  });
+}
+
+export async function cancelSandboxExecution(
+  executionId: string
+): Promise<{ cancelled: boolean }> {
+  return request<{ cancelled: boolean }>(`/runner/cancel/${executionId}`, {
+    method: "POST",
+  });
+}
+
+

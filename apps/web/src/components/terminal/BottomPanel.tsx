@@ -19,6 +19,7 @@ import {
 import { useLayoutStore, BottomTab } from "@/stores/layoutStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useEditorStore } from "@/stores/editorStore";
+import { fetchSandboxStatus } from "@/lib/api";
 
 export const BottomPanel: React.FC = () => {
   const {
@@ -43,8 +44,15 @@ export const BottomPanel: React.FC = () => {
   const { openFile } = useEditorStore();
 
   const [commandInput, setCommandInput] = useState("");
+  const [sandboxAvailable, setSandboxAvailable] = useState<boolean | null>(null);
   const terminalBottomRef = useRef<HTMLDivElement>(null);
   const isResizingRef = useRef(false);
+
+  useEffect(() => {
+    fetchSandboxStatus()
+      .then((s) => setSandboxAvailable(s.isDockerAvailable))
+      .catch(() => setSandboxAvailable(false));
+  }, []);
 
   // Auto-scroll en la terminal
   useEffect(() => {
@@ -145,7 +153,16 @@ export const BottomPanel: React.FC = () => {
         </div>
 
         {/* Acciones del panel */}
-        <div className="flex items-center gap-1 text-ide-text-muted">
+        <div className="flex items-center gap-2 text-ide-text-muted">
+          <div className="hidden sm:flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-mono border border-ide-border/60 bg-surface-900 text-ide-text-muted">
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                sandboxAvailable ? "bg-ide-success" : "bg-yellow-500"
+              }`}
+            />
+            <span>{sandboxAvailable ? "Sandbox Docker Aislado" : "Sandbox Protegido"}</span>
+          </div>
+
           {activeBottomTab === "terminal" && (
             <button
               onClick={clearHistory}

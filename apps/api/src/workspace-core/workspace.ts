@@ -45,6 +45,10 @@ export class WorkspaceManager {
     return projectDir;
   }
 
+  getProjectDirectory(projectId: string): string {
+    return resolveSafePath(this.baseDir, projectId);
+  }
+
   async getFileTree(projectId: string, subPath = ""): Promise<FileNodeItem[]> {
     const projectDir = resolveSafePath(this.baseDir, projectId);
     const targetDir = subPath ? resolveSafePath(projectDir, subPath) : projectDir;
