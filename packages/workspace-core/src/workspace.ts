@@ -202,7 +202,7 @@ export class WorkspaceManager {
             const content = await fs.readFile(absPath, "utf-8");
             const lines = content.split("\n");
 
-            lines.forEach((lineText, idx) => {
+            lines.forEach((lineText: string, idx: number) => {
               let match = false;
               if (useRegex) {
                 try {

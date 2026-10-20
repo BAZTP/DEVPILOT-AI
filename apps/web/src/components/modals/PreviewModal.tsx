@@ -10,13 +10,20 @@ import {
   Globe,
   ShieldCheck,
   AlertCircle,
+  Monitor,
+  Tablet,
+  Smartphone,
 } from "lucide-react";
 import { useLayoutStore } from "@/stores/layoutStore";
+
+type ViewportMode = "desktop" | "tablet" | "mobile";
 
 export const PreviewModal: React.FC = () => {
   const { isPreviewOpen, setPreviewOpen, previewUrl } = useLayoutStore();
   const [isRunning, setIsRunning] = useState(true);
   const [key, setKey] = useState(1);
+  const [viewport, setViewport] = useState<ViewportMode>("desktop");
+  const [urlInput, setUrlInput] = useState(previewUrl || "http://localhost:3000");
 
   if (!isPreviewOpen) return null;
 
@@ -29,11 +36,11 @@ export const PreviewModal: React.FC = () => {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none animate-fade-in">
-      <div className="w-full max-w-5xl h-[85vh] bg-ide-panel border border-ide-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
-        {/* ── Barra de control de Vista Previa ─────────────────────────────── */}
-        <div className="h-11 px-4 bg-ide-sidebar border-b border-ide-border flex items-center justify-between text-xs">
-          <div className="flex items-center gap-3">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-xs flex items-center justify-center z-50 p-4 select-none animate-fade-in">
+      <div className="w-full max-w-6xl h-[88vh] bg-ide-panel border border-ide-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
+        {/* ── Barra superior de control de Vista Previa ────────────────────── */}
+        <div className="h-12 px-4 bg-ide-sidebar border-b border-ide-border flex items-center justify-between text-xs gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="flex items-center gap-1.5 font-semibold text-ide-text">
               <Globe className="w-4 h-4 text-electric-400" />
               <span>Vista Previa Integrada</span>
@@ -47,21 +54,65 @@ export const PreviewModal: React.FC = () => {
                 }`}
               />
               <span className="text-ide-text">
-                {isRunning ? "Servidor local activo :3000" : "Servidor detenido"}
+                {isRunning ? "Servidor local :3000" : "Detenido"}
               </span>
-            </div>
-
-            <div className="hidden sm:flex items-center gap-1 text-2xs text-ide-text-muted">
-              <ShieldCheck className="w-3.5 h-3.5 text-ide-success" />
-              <span>Sandbox aislado (Same-Origin)</span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* Barra de dirección URL */}
+          <div className="flex-1 max-w-md hidden md:flex items-center gap-1.5 px-3 py-1 rounded-md bg-surface-900 border border-ide-border text-2xs font-mono">
+            <span className="text-ide-text-muted">URL:</span>
+            <input
+              type="text"
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              className="bg-transparent border-none outline-none text-ide-text flex-1 text-2xs"
+            />
+          </div>
+
+          {/* Selector de Dispositivos (Desktop, Tablet, Mobile) */}
+          <div className="flex items-center bg-surface-850 p-0.5 rounded border border-ide-border">
+            <button
+              onClick={() => setViewport("desktop")}
+              title="Escritorio (100%)"
+              className={`p-1 rounded transition-colors ${
+                viewport === "desktop"
+                  ? "bg-electric-600/30 text-electric-300"
+                  : "text-ide-text-muted hover:text-ide-text"
+              }`}
+            >
+              <Monitor className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setViewport("tablet")}
+              title="Tablet (768px)"
+              className={`p-1 rounded transition-colors ${
+                viewport === "tablet"
+                  ? "bg-electric-600/30 text-electric-300"
+                  : "text-ide-text-muted hover:text-ide-text"
+              }`}
+            >
+              <Tablet className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => setViewport("mobile")}
+              title="Móvil (375px)"
+              className={`p-1 rounded transition-colors ${
+                viewport === "mobile"
+                  ? "bg-electric-600/30 text-electric-300"
+                  : "text-ide-text-muted hover:text-ide-text"
+              }`}
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Acciones */}
+          <div className="flex items-center gap-1.5 shrink-0">
             {/* Detener / Iniciar servidor */}
             <button
               onClick={handleToggleServer}
-              className={`ide-btn px-2.5 py-1 text-2xs rounded flex items-center gap-1 ${
+              className={`px-2 py-1 text-2xs rounded flex items-center gap-1 transition-colors ${
                 isRunning
                   ? "bg-ide-error/15 text-ide-error border border-ide-error/30 hover:bg-ide-error/25"
                   : "bg-ide-success/15 text-ide-success border border-ide-success/30 hover:bg-ide-success/25"
@@ -70,12 +121,12 @@ export const PreviewModal: React.FC = () => {
               {isRunning ? (
                 <>
                   <Square className="w-3 h-3 fill-current" />
-                  <span>Detener</span>
+                  <span className="hidden sm:inline">Detener</span>
                 </>
               ) : (
                 <>
                   <Play className="w-3 h-3 fill-current" />
-                  <span>Iniciar</span>
+                  <span className="hidden sm:inline">Iniciar</span>
                 </>
               )}
             </button>
@@ -85,18 +136,18 @@ export const PreviewModal: React.FC = () => {
               onClick={handleRefresh}
               disabled={!isRunning}
               title="Recargar vista previa"
-              className="p-1 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800 disabled:opacity-40"
+              className="p-1.5 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800 disabled:opacity-40"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
 
             {/* Abrir en pestaña externa */}
             <a
-              href={previewUrl}
+              href={urlInput || previewUrl}
               target="_blank"
               rel="noopener noreferrer"
               title="Abrir en pestaña externa"
-              className="p-1 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800"
+              className="p-1.5 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800"
             >
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
@@ -106,23 +157,33 @@ export const PreviewModal: React.FC = () => {
             {/* Cerrar modal */}
             <button
               onClick={() => setPreviewOpen(false)}
-              className="p-1 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800"
+              className="p-1.5 rounded text-ide-text-muted hover:text-ide-text hover:bg-surface-800"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* ── Contenido de Vista Previa (Iframe aislado) ───────────────────── */}
-        <div className="flex-1 bg-surface-950 flex flex-col relative overflow-hidden">
+        {/* ── Contenedor del Iframe Aislado ─────────────────────────────────── */}
+        <div className="flex-1 bg-surface-950 flex items-center justify-center relative overflow-hidden p-2">
           {isRunning ? (
-            <iframe
-              key={key}
-              src="/"
-              title="Vista previa de DevPilot"
-              sandbox="allow-scripts allow-forms allow-same-origin"
-              className="w-full h-full border-none bg-white/5"
-            />
+            <div
+              className={`h-full transition-all duration-300 rounded-md overflow-hidden border border-ide-border/50 shadow-xl bg-surface-900 ${
+                viewport === "desktop"
+                  ? "w-full"
+                  : viewport === "tablet"
+                  ? "w-[768px]"
+                  : "w-[375px]"
+              }`}
+            >
+              <iframe
+                key={key}
+                src="/"
+                title="Vista previa de aplicación DevPilot"
+                sandbox="allow-scripts allow-forms allow-same-origin"
+                className="w-full h-full border-none"
+              />
+            </div>
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-ide-text-muted p-6 text-center select-none">
               <AlertCircle className="w-10 h-10 text-ide-error/60 mb-3" />

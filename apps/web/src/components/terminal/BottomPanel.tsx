@@ -15,10 +15,13 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Sparkles,
 } from "lucide-react";
 import { useLayoutStore, BottomTab } from "@/stores/layoutStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useEditorStore } from "@/stores/editorStore";
+import { useProjectStore } from "@/stores/projectStore";
+import { useAIStore } from "@/stores/aiStore";
 import { fetchSandboxStatus } from "@/lib/api";
 
 export const BottomPanel: React.FC = () => {
@@ -42,6 +45,8 @@ export const BottomPanel: React.FC = () => {
   } = useTerminalStore();
 
   const { openFile } = useEditorStore();
+  const { projectId } = useProjectStore();
+  const { setMode, addMessage } = useAIStore();
 
   const [commandInput, setCommandInput] = useState("");
   const [sandboxAvailable, setSandboxAvailable] = useState<boolean | null>(null);
@@ -175,7 +180,7 @@ export const BottomPanel: React.FC = () => {
 
           {activeBottomTab === "tests" && (
             <button
-              onClick={runTests}
+              onClick={() => runTests(projectId || undefined)}
               title="Reejecutar pruebas"
               className="p-1 rounded hover:bg-surface-800 hover:text-ide-text"
             >
@@ -277,19 +282,37 @@ export const BottomPanel: React.FC = () => {
                       content: "// Cargando archivo...",
                     });
                   }}
-                  className="py-1.5 px-2 hover:bg-surface-800/60 rounded flex items-start gap-2 cursor-pointer transition-colors"
+                  className="py-1.5 px-2 hover:bg-surface-800/60 rounded flex items-center justify-between gap-2 cursor-pointer transition-colors group"
                 >
-                  <AlertCircle
-                    className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
-                      prob.severity === "error" ? "text-ide-error" : "text-ide-warning"
-                    }`}
-                  />
-                  <div className="flex-1">
-                    <div className="text-ide-text">{prob.message}</div>
-                    <div className="text-[10px] text-ide-text-muted">
-                      {prob.file} [{prob.line}, {prob.column}] · {prob.source}
+                  <div className="flex items-start gap-2 flex-1 min-w-0">
+                    <AlertCircle
+                      className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${
+                        prob.severity === "error" ? "text-ide-error" : "text-ide-warning"
+                      }`}
+                    />
+                    <div className="flex-1 truncate">
+                      <div className="text-ide-text truncate">{prob.message}</div>
+                      <div className="text-[10px] text-ide-text-muted">
+                        {prob.file} [{prob.line}, {prob.column}] · {prob.source}
+                      </div>
                     </div>
                   </div>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMode("CHAT");
+                      addMessage({
+                        role: "user",
+                        content: `Por favor explica este diagnóstico y propón una solución:\nArchivo: ${prob.file}:${prob.line}\nDiagnóstico: ${prob.message} (${prob.source})`,
+                      });
+                    }}
+                    title="Explicar y corregir con IA"
+                    className="opacity-0 group-hover:opacity-100 flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 px-2 py-0.5 rounded bg-violet-950/40 border border-violet-800/40 shrink-0 transition-opacity"
+                  >
+                    <Sparkles className="w-3 h-3" />
+                    <span>Explicar con IA</span>
+                  </button>
                 </div>
               ))
             )}
@@ -315,7 +338,7 @@ export const BottomPanel: React.FC = () => {
                 </span>
               </div>
               <button
-                onClick={runTests}
+                onClick={() => runTests(projectId || undefined)}
                 disabled={testResults.isRunning}
                 className="ide-btn-primary px-2.5 py-1 text-2xs flex items-center gap-1"
               >
@@ -336,7 +359,24 @@ export const BottomPanel: React.FC = () => {
                       )}
                       <span className="text-ide-text">{suite.name}</span>
                     </div>
-                    <span className="text-ide-text-muted text-2xs">{suite.duration}ms</span>
+                    <div className="flex items-center gap-2">
+                      {suite.status === "failed" && (
+                        <button
+                          onClick={() => {
+                            setMode("CHAT");
+                            addMessage({
+                              role: "user",
+                              content: `La suite de pruebas "${suite.name}" ha fallado. Por favor analiza la causa y propón los cambios necesarios para que pasen las pruebas.`,
+                            });
+                          }}
+                          className="flex items-center gap-1 text-[10px] text-violet-400 hover:text-violet-300 px-1.5 py-0.5 rounded bg-violet-950/40 border border-violet-800/40 font-sans"
+                        >
+                          <Sparkles className="w-3 h-3" />
+                          <span>Explicar fallo con IA</span>
+                        </button>
+                      )}
+                      <span className="text-ide-text-muted text-2xs">{suite.duration}ms</span>
+                    </div>
                   </div>
 
                   <div className="pl-5 space-y-1 mt-1 font-mono text-[11px] text-ide-text-muted">

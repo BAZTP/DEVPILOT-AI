@@ -6,6 +6,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "build": "tsc",
+    "test": "vitest run",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -14,6 +15,7 @@
   "devDependencies": {
     "@types/node": "^22.10.1",
     "rimraf": "^6.0.1",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
   }
 }
